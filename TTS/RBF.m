@@ -131,9 +131,9 @@ for i = 1:m
    yfit = y(indx);
    C = (Xfit + L)\yfit;
    yEst = X(~indx,indx)*C;
-   errVect(i) = yEst - y(~indx);
+   errVect(i) = (yEst - y(~indx))^2;
 end
-err = norm(errVect/m);
+err = sqrt(mean(errVect));
 
 end
 

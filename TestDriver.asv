@@ -11,7 +11,7 @@ for i = 1:num
     y(i) = f.Func(x(i,:));
 end
 sig = var(y);
-SNR = 1E10;
+SNR = 1E0;
 noise = sig/SNR;
 y = y + sqrt(noise)*randn(size(y));
 
@@ -29,5 +29,5 @@ y = y + sqrt(noise)*randn(size(y));
 % model = RBF([x;x;x], [y;y2;y3]);
 
 
-model = ANN(x, y);
+model = SplineReg(x, y);
 end

@@ -14,9 +14,6 @@ model.InputDim = size(x,2);
 model.OutputDim = size(y,2);
 
 numSamples = size(x,1);
-crossValidate = true;
-xMVE = ones(1, model.InputDim);
-yMVE = ones(1, model.InputDim);
 testPlot = true;
 
 %Normalize and Sort Inputs, Normalize Outputs
@@ -47,110 +44,126 @@ binR = (0:range/bins:range)';
 gammaBar = zeros(length(binR),1);
 for i = 1:length(gammaBar)-1
     indx = r >= binR(i) & r < binR(i+1);
-    sum(indx)
     gammaBar(i) = mean(gamma(indx));
 end
 binR = binR(1:end-1);
 gammaBar = gammaBar(1:end-1);
-fprintf(1, 'Bin 1 SNR = %f\n', 1/gammaBar(1));
 
-%Compute the Range (Sill is Regressed)
+%Compute the Range and Sill
 R = binR(end);
+S = gammaBar(end);
 for i = 1:length(binR)-1
     if gammaBar(i+1) < gammaBar(i)
-        R = mean(binR(i:end));
+        R = binR(i);
+        S = mean(gammaBar(i:end));
         break;
     end
 end
-plot(binR, gammaBar, '.k');
-
 
 %Determine whether to use a Spherical, Exponential, or Gaussian empirical
 %semi-variogram model.
 %Spherical Model
-nLag = binR/R;
-sphericalV = 3/2*min(nLag,1) - 0.5*min(nLag,1).^3;
-X = [sphericalV, 1-sphericalV];
-sphericalC = (X'*X)\(X'*gammaBar);
-sphericalC(2) = max(sphericalC(2), 0);
-sphericalGamma = X*sphericalC;
-sphericalErr = norm(sphericalGamma - gammaBar);
-hold on;
-plot(binR, sphericalGamma, '-g');
+sphericalErr = 1E9;
+% [sphericalN, sphericalErr] = fminbnd(@(N) FitSemiVariogram(N, R, S, x, y, 'spherical'), 0, S);
 
 %Exponential Model
-exponentialV = 1 - exp(-3*nLag);
-X = [exponentialV, 1-exponentialV];
-exponentialC = (X'*X)\(X'*gammaBar);
-exponentialC(2) = max(exponentialC(2), 0);
-exponentialGamma = X*exponentialC;
-exponentialErr = norm(exponentialGamma - gammaBar);
-plot(binR, exponentialGamma, '-b');
+exponentialErr = 1E9;
+% [exponentialN, exponentialErr] = fminbnd(@(N) FitSemiVariogram(N, R, S, x, y, 'exponential'), 0, S);
 
 %Gaussian Model
-gaussianV = 1 - exp(-3*nLag.^2);
-X = [gaussianV, 1-gaussianV];
-gaussianC = (X'*X)\(X'*gammaBar);
-gaussianC(2) = max(gaussianC(2), 0);
-gaussianGamma = X*gaussianC;
-gaussianErr = norm(gaussianGamma - gammaBar);
-plot(binR, gaussianGamma, '-r');
+[gaussianN, gaussianErr] = fminbnd(@(N) FitSemiVariogram(N, R, S, x, y, 'gaussian'), 0, S, optimset('Display', 'iter'));
 
 %Select the Variogram Type
 model.Range = R;
+model.Sill  = S;
 if sphericalErr < exponentialErr && sphericalErr < gaussianErr
     model.vModel = 'spherical';
-    model.Sill   = sphericalC(1);
-    model.Nugget = sphericalC(2);
+    model.Nugget = sphericalN;
+    model.MVE    = sphericalErr;
 elseif exponentialErr < sphericalErr && exponentialErr < gaussianErr
     model.vModel = 'exponential';
-    model.Sill   = exponentialC(1);
-    model.Nugget = exponentialC(2);
+    model.Nugget = exponentialN;
+    model.MVE    = exponentialErr;
 else
     model.vModel = 'gaussian';
-    model.Sill   = gaussianC(1);
-    model.Nugget = gaussianC(2);
+    model.Nugget = gaussianN;
+    model.MVE    = gaussianErr;
 end
 
-%% Compute Model Parameters
-model.Psi = zeros(numSamples, numSamples);
-N = model.Nugget;
-fprintf(1, 'Estimated Data SNR = %f\n', 1/N);
-S = model.Sill;
-R = model.Range;
+%% Compute Model Parameters & Fit Statistics
+[model.PsiInv, Psi] = ComputeSemiVarianceMatrix(model.Nugget, model.Range, model.Sill, model.vModel, x);
+yEst = zeros(size(y));
+for i = 1:length(yEst)
+    yEst(i) = y'*model.PsiInv*Psi(:,i);
+end
+yBar = mean(y);
+SStot = sum((y - yBar).^2);
+err = yEst - y;
+SSres = sum(err.*err);
+model.MRSE = sqrt(SSres/length(err));
+model.R2 = 1 - SSres/SStot;
+
+%% Plotting
+if (testPlot)
+    if model.InputDim == 1
+        figure();
+        plot(x, y, '.k');
+        hold on;
+        plot(x, yEst, '.g');
+    elseif model.InputDim == 2
+        figure();
+        plot3(x(:,1), x(:,2), y, '.k');
+        hold on;
+        plot3(x(:,1), x(:,2), yEst, '.g');
+    end
+end
+
+
+end
+
+function [PsiInv, Psi] = ComputeSemiVarianceMatrix(Nugget, Range, Sill, Type, x)
+
+numSamples = size(x,1);
+Psi = zeros(numSamples, numSamples);
+N = Nugget;
+S = Sill;
+R = Range;
 for i = 1:numSamples
     for j = i:numSamples
         lag = min(norm(x(i,:) - x(j,:))/R, 1);
-        if     strcmp(model.vModel, 'spherical')
-            model.Psi(i, j) = (S-N)*(3/2*lag - 0.5*lag^3);
-            model.Psi(j, i) = model.Psi(i, j);
-        elseif strcmp(model.vModel, 'exponential')
-            model.Psi(i, j) = (S-N)*(1 - exp(-3*lag));
-            model.Psi(j, i) = model.Psi(i, j);
-        elseif strcmp(model.vModel, 'gaussian')
-            model.Psi(i, j) = (S-N)*(1 - exp(-3*lag^2));
-            model.Psi(j, i) = model.Psi(i, j);
+        if  strcmp(Type, 'spherical')
+            Psi(i, j) = (S-N)*(3/2*lag - 0.5*lag^3);
+            Psi(j, i) = Psi(i, j);
+        elseif strcmp(Type, 'exponential')
+            Psi(i, j) = (S-N)*(1 - exp(-3*lag));
+            Psi(j, i) = Psi(i, j);
+        elseif strcmp(Type, 'gaussian')
+            Psi(i, j) = (S-N)*(1 - exp(-3*lag^2));
+            Psi(j, i) = Psi(i, j);
         else
             error('Unsupported Model Type');
         end
     end
 end
-model.PsiInv = inv(model.Psi - N*eye(numSamples));
-
-%% Compute Fit Statistics
-yEst = zeros(size(y));
-for i = 1:length(yEst)
-    yEst(i) = y'*model.PsiInv*(model.Psi(:,i));
-end
-figure();
-plot(x, y, '.k');
-hold on;
-plot(x, yEst, '.g');
-
+PsiInv = inv(Psi - N*eye(numSamples));
 
 end
 
-function err = FitSemiVariogram(Nugget, Type)
+function [err] = FitSemiVariogram(Nugget, Range, Sill, x, y, Type)
 
+%Compute covariance matrix and inverse
+[PsiInv, Psi] = ComputeSemiVarianceMatrix(Nugget, Range, Sill, Type, x);
+
+%Compute Crossvalidation Error
+numSamples = length(y);
+errVect = zeros(numSamples, 1);
+iVect = 1:numSamples;
+for i = iVect
+    indx = iVect ~= i;
+    Pinv = PsiInv(indx, indx);
+    yEst = y(indx)'*Pinv*Psi(indx, i);
+    errVect(i) = (yEst - y(i))^2;
+end
+err = sqrt(mean(errVect));
 
 end
