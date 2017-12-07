@@ -32,63 +32,52 @@ id = 1;
 for i = 1:numSamples
     for j = i+1:numSamples
         gamma(id) = 0.5*(y(i) - y(j))^2;
-        r(id) = norm(x(i, :) - x(j,:));
+        r(id) = 0.5*norm(x(i, :) - x(j,:));
         id = id + 1;
     end
 end
 
-%Bin Data
-range = max(r);
-bins = ceil(sqrt(numSamples));
-binR = (0:range/bins:range)';
-gammaBar = zeros(length(binR),1);
-for i = 1:length(gammaBar)-1
-    indx = r >= binR(i) & r < binR(i+1);
+%Bin SemiVariance and Compute Nugget
+bins = ceil(0.5*numSamples);
+binR = zeros(bins,1);
+gammaBar = zeros(bins, 1);
+binWidth = max(r)/bins;
+for i = 1:bins
+    indx = r < i*binWidth & r >= (i-1)*binWidth;
+    binR(i) = mean(r(indx));
     gammaBar(i) = mean(gamma(indx));
 end
-binR = binR(1:end-1);
-gammaBar = gammaBar(1:end-1);
+N = gammaBar(1); %Temporary Nugget
 
-%Compute the Range and Sill
-R = binR(end);
-S = gammaBar(end);
-for i = 1:length(binR)-1
-    if gammaBar(i+1) < gammaBar(i)
-        R = binR(i);
-        S = mean(gammaBar(i:end));
-        break;
-    end
-end
-
-%Determine whether to use a Spherical, Exponential, or Gaussian empirical
-%semi-variogram model.
-%Spherical Model
-sphericalErr = 1E9;
-% [sphericalN, sphericalErr] = fminbnd(@(N) FitSemiVariogram(N, R, S, x, y, 'spherical'), 0, S);
-
-%Exponential Model
-exponentialErr = 1E9;
-% [exponentialN, exponentialErr] = fminbnd(@(N) FitSemiVariogram(N, R, S, x, y, 'exponential'), 0, S);
-
-%Gaussian Model
-[gaussianN, gaussianErr] = fminbnd(@(N) FitSemiVariogram(N, R, S, x, y, 'gaussian'), 0, S, optimset('Display', 'iter'));
+%% Determine whether to use a Linear, Spherical, Exponential, or Gaussian Model
+[linearR, linearErr] = BoundLineSearch(@(R) FitSemiVariogram(N, R, binR, gammaBar, 'linear'), 0, binR(end));
+[sphericalR, sphericalErr] = BoundLineSearch(@(R) FitSemiVariogram(N, R, binR, gammaBar, 'spherical'), 0, binR(end));
+[exponentialR, exponentialErr] = BoundLineSearch(@(R) FitSemiVariogram(N, R, binR, gammaBar, 'exponential'), 0, binR(end));
+[gaussianR, gaussianErr] = BoundLineSearch(@(R) FitSemiVariogram(N, R, binR, gammaBar, 'gaussian'), 0, binR(end));
 
 %Select the Variogram Type
-model.Range = R;
-model.Sill  = S;
-if sphericalErr < exponentialErr && sphericalErr < gaussianErr
+if linearErr < sphericalErr && linearErr < exponentialErr && linearErr < gaussianErr
+    model.vModel = 'linear';
+    model.Range  = linearR;
+elseif  sphericalErr < linearErr && sphericalErr < exponentialErr && sphericalErr < gaussianErr
     model.vModel = 'spherical';
-    model.Nugget = sphericalN;
-    model.MVE    = sphericalErr;
-elseif exponentialErr < sphericalErr && exponentialErr < gaussianErr
+    model.Range  = sphericalR;
+elseif exponentialErr < linearErr && exponentialErr < sphericalErr && exponentialErr < gaussianErr
     model.vModel = 'exponential';
-    model.Nugget = exponentialN;
-    model.MVE    = exponentialErr;
+    model.Range  = exponentialR;
 else
     model.vModel = 'gaussian';
-    model.Nugget = gaussianN;
-    model.MVE    = gaussianErr;
+    model.Range = gaussianR;
 end
+if any(r >= model.Range)
+    model.Sill = mean(gamma(r >= model.Range));
+else
+    model.Sill = gammaBar(end);
+end
+
+%% Compute the Regression Nugget via CrossValidation
+[model.Nugget, model.MVE] = BoundLineSearch(@(N) PCVE(N, model.Range, model.Sill, model.vModel, x, y), N, model.Sill, true);
+% model.Nugget = N;
 
 %% Compute Model Parameters & Fit Statistics
 [model.PsiInv, Psi] = ComputeSemiVarianceMatrix(model.Nugget, model.Range, model.Sill, model.vModel, x);
@@ -102,6 +91,9 @@ err = yEst - y;
 SSres = sum(err.*err);
 model.MRSE = sqrt(SSres/length(err));
 model.R2 = 1 - SSres/SStot;
+model.numNodes = numSamples;
+model.nodeX    = x;
+model.nodeY    = y;
 
 %% Plotting
 if (testPlot)
@@ -121,49 +113,64 @@ end
 
 end
 
+function err = PCVE(Nugget, Range, Sill, Type, x, y)
+%Select a spread of p% of all rows for cross validation
+p = 1;
+n = size(x,1);
+s = ceil(1/p);
+cvSet = (s:s:n)';
+m = length(cvSet);
+row = (1:n)';
+errVect = zeros(m,1);
+[~, Psi] = ComputeSemiVarianceMatrix(Nugget, Range, Sill, Type, x);
+N = Nugget*eye(size(Psi)-1);
+yt = y';
+
+%Loop and fit model m times computing error each time
+for i = 1:m
+   indx = row ~= cvSet(i);
+   subPsi = Psi(indx, indx);
+   PsiInv = inv(subPsi - N);
+   yEst = yt(indx)*PsiInv*Psi(indx, cvSet(i));
+   errVect(i) = (yEst - y(~indx))^2;
+end
+err = sqrt(mean(errVect));
+
+
+end
+
 function [PsiInv, Psi] = ComputeSemiVarianceMatrix(Nugget, Range, Sill, Type, x)
 
 numSamples = size(x,1);
 Psi = zeros(numSamples, numSamples);
-N = Nugget;
+N = min(Nugget, Sill);
 S = Sill;
 R = Range;
 for i = 1:numSamples
     for j = i:numSamples
         lag = min(norm(x(i,:) - x(j,:))/R, 1);
-        if  strcmp(Type, 'spherical')
-            Psi(i, j) = (S-N)*(3/2*lag - 0.5*lag^3);
-            Psi(j, i) = Psi(i, j);
-        elseif strcmp(Type, 'exponential')
-            Psi(i, j) = (S-N)*(1 - exp(-3*lag));
-            Psi(j, i) = Psi(i, j);
-        elseif strcmp(Type, 'gaussian')
-            Psi(i, j) = (S-N)*(1 - exp(-3*lag^2));
-            Psi(j, i) = Psi(i, j);
-        else
-            error('Unsupported Model Type');
-        end
+        Psi(i, j) = VarianceModel(N, S, lag, Type);
+        Psi(j, i) = Psi(i, j);
     end
 end
 PsiInv = inv(Psi - N*eye(numSamples));
 
 end
 
-function [err] = FitSemiVariogram(Nugget, Range, Sill, x, y, Type)
+function [err] = FitSemiVariogram(Nugget, Range, r, gamma, Type)
 
-%Compute covariance matrix and inverse
-[PsiInv, Psi] = ComputeSemiVarianceMatrix(Nugget, Range, Sill, Type, x);
-
-%Compute Crossvalidation Error
-numSamples = length(y);
-errVect = zeros(numSamples, 1);
-iVect = 1:numSamples;
-for i = iVect
-    indx = iVect ~= i;
-    Pinv = PsiInv(indx, indx);
-    yEst = y(indx)'*Pinv*Psi(indx, i);
-    errVect(i) = (yEst - y(i))^2;
+%Compute Sill from data
+indx = r >= Range;
+if sum(indx) == 0
+    Sill = gamma(end);
+else
+    Sill = mean(gamma(indx));
 end
-err = sqrt(mean(errVect));
+
+%Compute Fit Error
+lag = min(r/Range, 1);
+err = (VarianceModel(Nugget, Sill, lag, Type) - gamma).^2;
+err = sqrt(mean(err));
 
 end
+

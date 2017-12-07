@@ -95,8 +95,8 @@ function objFuns = ObjectiveFunctionStructure()
     shekel = struct();
     shekel.Name = 'Shekel';
     shekel.Func = @Shekel;
-    shekel.MinVals = zeros(4,1);
-    shekel.MaxVals = 10*ones(4,1);
+    shekel.MinVals = zeros(1,4);
+    shekel.MaxVals = 10*ones(1,4);
     
     %Hartmann 6D Function
     hart6d = struct();

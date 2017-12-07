@@ -18,14 +18,14 @@ numSamples = size(x,1);
 crossValidate = true;
 xMVE = ones(1, model.InputDim);
 yMVE = ones(1, model.InputDim);
-startOrder = 1;
+startOrder = 0;
 stopOrder = 0;
-while (stopOrder + 1)^(model.InputDim) + 1 < numSamples
+while ComputePowerMatrixSize(stopOrder + 1, model.InputDim) < numSamples
     stopOrder = stopOrder + 1;
 end
-testPlot = true;
+testPlot = false;
 abortTol = 1E-3;
-maxStallCount = 4;
+maxStallCount = 2;
 stallCount = 0;
 
 %Normalize and Sort Inputs, Normalize Outputs
@@ -52,7 +52,7 @@ while i <= length(varargin)
        end
    elseif strcmp(varargin{i}, 'startOrder')
        startOrder = varargin{i+1};
-       if startOrder >= stopOrder
+       if startOrder > stopOrder
            error('startOrder larger than degrees of freedom');
        end
        i = i + 2;
@@ -64,13 +64,16 @@ while i <= length(varargin)
            stopOrder = startOrder;
        end
        i = i + 2;
+   elseif strcmp(varargin{i}, 'plot')
+       testPlot = true;
+       i = i + 1;
    else
        error('Unknown command %s', varargin{i});
    end    
 end
 
 %% Model Construction Loop
-model.MVE   = Inf;
+model.MVE   = 1E16;
 for iOrder  = startOrder:stopOrder
     %Generate Vandermoode Matrix
     P = ComputePowerMatrix(iOrder, model.InputDim);
@@ -87,15 +90,15 @@ for iOrder  = startOrder:stopOrder
     %Determine Regularization Coefficient
     if crossValidate
         %Optimize Regularization Coefficient via Cross Validation
-        [lambda, MVE] = fminbnd(@(L) PCVE(X, y, L), 0, numSamples); 
+        [lambda, MVE] = BoundLineSearch(@(L) PCVE(X, y, L), 1E-3, 0.1*numSamples); 
     else       
         %Optimize Regularization Coefficient
-        [lambda, MVE] = fminbnd(@(L) VE(X, y, XMVE, yMVE, L), 0, numSamples);         
+        [lambda, MVE] = BoundLineSearch(@(L) VE(X, y, XMVE, yMVE, L), 1E-3, 0.1*numSamples);         
     end
 
     %Compute Model Parameters and Fit Statistics
-    L = lambda*eye(size(X,2));
-    C = (X'*X + L)\(X'*y);
+    temp = inv(chol(X'*X + lambda*eye(size(X,2))));
+    C = (temp*temp')*(X'*y);
     yEst = X*C;
     yBar = mean(y);
     SStot = sum((y - yBar).^2);
@@ -112,16 +115,21 @@ for iOrder  = startOrder:stopOrder
             hold on;
             plot(x, yEst, '.g');
         elseif model.InputDim == 2
+            tempModel = model;
+            tempModel.C = C;
+            tempModel.P = P;
+            tempModel.lambda = lambda;            
+            
             figure();
-            plot3(x(:,1), x(:,2), y, '.k');
+            PlotModel(tempModel);
             hold on;
-            plot3(x(:,1), x(:,2), yEst, '.g');
+            plot3(x(:,1), x(:,2), y, '.k');
+            zlim([-3, 3]);
         end
     end
         
     %Update Model Parameters if Error Decreased
-    fprintf(1, 'Order %i, MVE = %f\n', iOrder, MVE);
-    if MVE < model.MVE
+    if model.MVE - MVE > 0.05*model.MVE
         model.Order = iOrder;
         model.C = C;
         model.P = P;
@@ -133,7 +141,11 @@ for iOrder  = startOrder:stopOrder
     else
         stallCount = stallCount + 1;
     end
-
+        
+    if testPlot
+        fprintf(1, 'Order %i, MVE = %f, lambda = %f\n', iOrder, MVE, lambda);
+    end
+    
     %Break generation loop if if model meets abort criteria
     if model.MVE < abortTol || stallCount > maxStallCount
         break;
@@ -147,21 +159,22 @@ end
 function err = PCVE(X,y,lambda)
 
 %Select a spread of p% of all rows for cross validation
-p = 1;
 n = size(X,1);
+p = min(40/n, 1.0);
 s = ceil(1/p);
 cvSet = (s:s:n)';
 m = length(cvSet);
 row = (1:n)';
 errVect = zeros(m,1);
-L = lambda*eye(size(X,2));
+L = (lambda)*eye(size(X,2));
 
 %Loop and fit model m times computing error each time
 for i = 1:m
    indx = row ~= cvSet(i);
    Xfit = X(indx,:);
    yfit = y(indx);
-   C = (Xfit'*Xfit + L)\(Xfit'*yfit);
+   temp = inv(chol(Xfit'*Xfit + L));
+   C = (temp*temp')*(Xfit'*yfit); 
    yEst = X(~indx,:)*C;
    errVect(i) = (yEst - y(~indx))^2;
 end

@@ -14,17 +14,20 @@ model.Type = 'SplineReg';
 model.InputDim = size(x,2);
 model.OutputDim = size(y,2);
 
-%If less than 3rd order data points, just build a polynomial regression
-polyOrder = 3;
+%Truncate Spline Polynomial Order to fit number of samples
 numSamples = size(x,1);
+polyOrder = 3;
+while polyOrder > 0 && (numSamples - 2) < ComputePowerMatrixSize(polyOrder, model.InputDim);
+    polyOrder = polyOrder - 1;
+end
 crossValidate = true;
 xMVE = ones(1, model.InputDim);
 yMVE = ones(1, model.InputDim);
-startOrder = 1;
-stopOrder = (numSamples - 1) - polyOrder^model.InputDim;
-testPlot = true;
-abortTol = 1E-3;
-maxStallCount = 20;
+startOrder = 0;
+stopOrder = floor(((numSamples - 1) - ComputePowerMatrixSize(polyOrder, model.InputDim))/model.InputDim);
+testPlot = false;
+abortTol = 1E-2;
+maxStallCount = 10;
 stallCount = 0;
 
 %Normalize and Sort Inputs, Normalize Outputs
@@ -52,14 +55,14 @@ while i <= length(varargin)
        end
    elseif strcmp(varargin{i}, 'startOrder')
        startOrder = varargin{i+1};
-       if startOrder >= stopOrder
-           error('startOrder larger than degrees of freedom');
+       if startOrder > stopOrder
+           startOrder = 0;
        end
        i = i + 2;
    elseif strcmp(varargin{i}, 'order') 
        startOrder = varargin{i+1};
        if (startOrder > stopOrder)
-           error('order larger than degrees of freedom');
+           startOrder = stopOrder;
        else
            stopOrder = startOrder;
        end
@@ -68,21 +71,18 @@ while i <= length(varargin)
        polyOrder = varargin{i+1};
        stopOrder = (numSamples - 1) - polyOrder^model.InputDim;
        i = i + 2;
+   elseif strcmp(varargin{i}, 'plot')
+       testPlot = true;
+       i = i + 1;
    else
        error('Unknown command %s', varargin{i});
    end    
 end
 
-%% If Insuffcient Number of Samples, Use Polynomial Regression
-if (numSamples - 2 < polyOrder^model.InputDim)
-    model = PolyReg(x, y);
-    model.Type = 'SplineReg';
-    return;
-end
-
 %% Model Construction Loop
-model.MVE   = Inf;
-for iOrder  = startOrder:stopOrder
+model.MVE   = 1E16;
+for iOrder  = startOrder:stopOrder  
+    
     % Generate Knot Positions
     step = 1/(iOrder+1);
     knotIndx = ceil(numSamples*(step:step:(1-step)));
@@ -91,7 +91,7 @@ for iOrder  = startOrder:stopOrder
     % Compute Vandermoode Matrix
     P = ComputePowerMatrix(polyOrder, model.InputDim);
     numPolyCoef = size(P,1);
-    numKnotCoef = iOrder;
+    numKnotCoef = iOrder*model.InputDim;
     X = ones(numSamples, numPolyCoef + numKnotCoef);
     for i = 2:numPolyCoef
         for j = 1:model.InputDim
@@ -99,20 +99,20 @@ for iOrder  = startOrder:stopOrder
         end
     end
     for i = 1:numKnotCoef
-        X(:,i+numPolyCoef) = sum(max(x - K(i), 0),2).^polyOrder;
+        knot = ceil(i/model.InputDim);
+        dim = mod(i-1, model.InputDim) + 1;
+        X(:,numPolyCoef+i) = max(x(:,dim) - K(knot, dim), 0).^polyOrder;
     end
     
     if crossValidate
-        %Optimize Regularization Coefficient via Cross Validation
-        [lambda, MVE] = fminbnd(@(L) PCVE(X, y, L), 0, numSamples); 
+        [MVE, lambda] = PCVE(X, y); 
     else       
-        %Optimize Regularization Coefficient
-        [lambda, MVE] = fminbnd(@(L) VE(X, y, XMVE, yMVE, L), 0, numSamples);         
+        [MVE, lambda] = VE(X, y, XMVE, yMVE);         
     end
 
     %Compute Model Parameters and Fit Statistics
-    L = lambda*eye(size(X,2));
-    C = (X'*X + L)\(X'*y);
+    temp = inv(chol(X'*X + lambda*eye(size(X,2))));
+    C = (temp*temp')*(X'*y);
     yEst = X*C;
     yBar = mean(y);
     SStot = sum((y - yBar).^2);
@@ -129,17 +129,23 @@ for iOrder  = startOrder:stopOrder
             hold on;
             plot(x, yEst, '.g');
         elseif model.InputDim == 2
+            tempModel = model;
+            tempModel.K = K;
+            tempModel.C = C;
+            tempModel.P = P;
+            tempModel.lambda = lambda;            
+            
             figure();
-            plot3(x(:,1), x(:,2), y, '.k');
+            PlotModel(tempModel);
             hold on;
-            plot3(x(:,1), x(:,2), yEst, '.g');
+            plot3(x(:,1), x(:,2), y, '.k');
+            zlim([-3, 3]);
         end
     end
         
-    %Update Model Parameters if Error Decreased
-    fprintf(1, 'Order %i, MVE = %f\n', iOrder, MVE);
-    if MVE < model.MVE
+    if model.MVE - MVE > 0.02*model.MVE
         model.Order = iOrder;
+        model.K = K;
         model.C = C;
         model.P = P;
         model.lambda = lambda;
@@ -151,34 +157,51 @@ for iOrder  = startOrder:stopOrder
         stallCount = stallCount + 1;
     end
 
+    %Update Model Parameters if Error Decreased
+    if testPlot
+        fprintf(1, 'Order %i, MVE = %f, StallCount = %f\n', iOrder, MVE, stallCount);
+    end
+    
     %Break generation loop if if model meets abort criteria
     if model.MVE < abortTol || stallCount > maxStallCount
         break;
     end
+    
+
 end
     
 end
 
 %Function to compute Partial Cross Validation Error for Polynomial
 %Regression.
-function err = PCVE(X,y,lambda)
+function [err, lambda] = PCVE(X,y)
 
 %Select a spread of p% of all rows for cross validation
-p = 1;
 n = size(X,1);
+p = min(40/n, 1.0);
 s = ceil(1/p);
 cvSet = (s:s:n)';
 m = length(cvSet);
 row = (1:n)';
 errVect = zeros(m,1);
-L = lambda*eye(size(X,2));
+
+%Ensure Matrix is Semi-Positive Definite
+lambda = 1E-3;
+I = eye(size(X,2));
+XtX = X'*X;
+[~, p] = chol(XtX + lambda*I);
+while p ~= 0
+    lambda = lambda*2;
+    [~, p] = chol(XtX + lambda*I);
+end
 
 %Loop and fit model m times computing error each time
 for i = 1:m
    indx = row ~= cvSet(i);
    Xfit = X(indx,:);
    yfit = y(indx);
-   C = (Xfit'*Xfit + L)\(Xfit'*yfit);
+   temp = inv(chol(Xfit'*Xfit + lambda*I));
+   C = (temp*temp')*(Xfit'*yfit);
    yEst = X(~indx,:)*C;
    errVect(i) = (yEst - y(~indx))^2;
 end
@@ -187,11 +210,21 @@ err = sqrt(mean(errVect));
 end
 
 %Compute Validation Error of a Model
-function err = VE(X, y, Xval, yval, lambda)
+function [err, lambda] = VE(X, y, Xval, yval)
 
-L = lambda*eye(size(X,2));
-C = (X'*X + L)\(X*y);
+%Ensure Matrix is Semi-Positive Definite
+lambda = 0;
+I = eye(size(X,2));
+XtX = X'*X;
+[~, p] = chol(XtX + lambda*I);
+while p ~= 0
+    lambda = lambda + 1;
+    [~, p] = chol(XtX + lambda*I);
+end
+
+temp = inv(chol(X'*X + lambda*I));
+C = (temp*temp')*(X'*y);
 yEst = Xval*C;
-err = norm(yEst - yval);
+err = sqrt(mean((yEst - yval).^2));
 
 end

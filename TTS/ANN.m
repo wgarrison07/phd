@@ -15,7 +15,7 @@ model.Type = 'ANN';
 model.InputDim = size(x,2);
 model.OutputDim = size(y,2);
 numSamples = size(x,1);
-maxStallCount = 100;
+maxStallCount = 5;
 testPlot = true;
 
 %Normalize and Sort Inputs, Normalize Outputs
@@ -26,96 +26,90 @@ sumX = sum(x,2);
 x = x(indx,:);
 y = y(indx,:);
 
-%% Divide Data into Training and Testing Sets
-testP     = 0.2; %Twenty Percent
-trainIndx = mod(1:numSamples, 1/testP) ~= 0;
-trainX    = x(trainIndx, :);
-trainY    = y(trainIndx, :);
-testX     = x(~trainIndx, :);
-testY     = y(~trainIndx, :);
-
 %% Initialize Neural Network
-model.numHLN = 10 + 2*ceil(sqrt(size(trainX,1)));
-nodes = (1:model.numHLN)';
-W1 = randn(model.numHLN, model.InputDim + 1);
-W1(:,end-1) = (nodes - mean(nodes))/std(nodes); 
+model.numHLN = ceil(sqrt(size(x, 1))) + 10;
+maxAlp = 1/model.numHLN;
+W1 = randn(model.numHLN, model.InputDim+1);
 W2 = randn(model.OutputDim, model.numHLN + 1);
-model.MVE = Inf;
+model.MVE = 1E8;
 stallCount = 0;
 
+
 %% Model Training Loop
-alpha = 1;
-for iter = 0:1E4
+for iter = 0:1E3
     %Compute Backpropagation Error Gradients
-    [G1, G2] = ComputeErrorGradient(W1, W2, trainX, trainY);
+    [G1, G2] = ComputeErrorGradient(W1, W2, x, y);
     
-    %Correct Neuron Weights
-    W1 = W1 - G1*alpha;% - H1*alpha^2;
-    W2 = W2 - G2*alpha;% - H2*alpha^2;
+    %Correct Hidden Layer Neuron Weights w/ LineSearch
+    alpha = fminbnd(@(alpha) Error(W1, W2, G1, G2, x, y, alpha), 0, maxAlp);
+    W1 = W1 - alpha*G1;
+    W2 = W2 - alpha*G2;
     
-    %Compute Testing Error
-    yEst = Predict(W1, W2, testX);
-    MVE = mean(sqrt(sum((yEst - testY).^2, 2)));
-    if mod(iter, 100) == 0 || true
-        fprintf(1, 'iter = %f, MVE = %f, alpha = %f\n', iter, MVE, alpha);
-    end
-    
-    %Check for Training Abort
-    if MVE >= model.MVE
-        alpha = max(0.9*alpha, 1E-9);
-        W1 = model.W1;
-        W2 = model.W2;
+    %Compute Estimate Validation Error (training error)
+    yEst = PredictANN(W1, W2, x);
+    MVE = sqrt(mean(sum((yEst - y).^2, 2)));
+    fprintf(1, 'iter = %f, MVE = %f, alpha = %f\n', iter, MVE, alpha);
+   
+    %Update Stall Count
+    if model.MVE - MVE < 1E-3
         stallCount = stallCount + 1;
         if stallCount > maxStallCount
             break;
         end
     else
-       %Update Model
-       alpha = alpha*(1 + 1E-4);
-       stallCount = 0;
-       model.MVE = MVE;
-       model.W1 = W1;
-       model.W2 = W2;
+        stallCount = 0;
     end
+    
+    %Update Model if improved
+    if MVE < model.MVE
+        model.MVE = MVE;
+        model.W1 = W1;
+        model.W2 = W2;
+    else
+        W1 = 0.5*W1 + 0.5*model.W1;
+        W2 = 0.5*W2 + 0.5*model.W2;
+    end      
 end
 
 %% Compute Fit Statistics
+[~, X] = PredictANN(model.W1, model.W2, x);
+[lambda, model.MVE] = fminbnd(@(L) PCVE(X, y, L), 0, 0.5*numSamples, optimset('Display', 'iter'));
+I = eye(model.numHLN + 1);
+model.W2 = (pinv(X'*X + lambda*I)*X'*y)';
+yEst = PredictANN(model.W1, model.W2, x);
 
 %Test Plot if Testing Algorithm
 if (testPlot && true)
     if model.InputDim == 1
         figure();
+        title('Test Data');
         plot(x, y, '.k');
         hold on;
-        plot(testX, yEst, '.g');
-        yEst = Predict(W1, W2, trainX);
-        plot(trainX, yEst, '.g');
+        x = (min(x):0.001:max(x))';
+        yEst = PredictANN(model.W1, model.W2, x);
+        plot(x, yEst, '.g');
+        
     elseif model.InputDim == 2
         figure();
         plot3(x(:,1), x(:,2), y, '.k');
         hold on;
-        plot3(testX(:,1), testX(:,2), yEst, '.g');
-        yEst = Predict(W1, W2, trainX);
-        plot3(trainX(:,1), trainX(:,2), yEst, '.g');
+        yEst = PredictANN(model.W1, model.W2, x);
+        plot3(x(:,1), x(:,2), yEst, '.g');
     end
 end
 
 end
 
-function yEst = Predict(W1, W2, x)
-    n = size(x, 1);
-    yEst = zeros(n, size(W2, 1));
-    x = [x, ones(n,1)];
-    for i = 1:n
-        z = W1*x(i, :)';
-        g = [tanh(z);1];
-        yEst(i, :) = (W2*g)';
-    end
+function err = Error(W1, W2, G1, G2, x, y, alpha)
+
+W1 = W1 - alpha*G1;
+W2 = W2 - alpha*G2;
+yEst = PredictANN(W1, W2, x);
+err = sqrt(mean(sum((yEst - y).^2, 2)));
 
 end
 
 function [G1, G2] = ComputeErrorGradient(W1, W2, x, y) 
-
 G1 = zeros(size(W1));
 G2 = zeros(size(W2));
 n = size(x, 1);
@@ -128,14 +122,40 @@ for i = 1:n
     yEst = (W2*g)';
     
     %Backward Pass
-%     err = ((-1-y(i,:))./(1+yEst) - (-1+y(i,:))./(1-yEst));
-    err = 2*(yEst - y(i,:));
-    G2 = G2 + (g*err)';
+    err = 4*(yEst - y(i,:))^3;
+    G2 = G2 + err*g';
     dedg = repmat(err*W2, m, 1)';
     grad = dedg.*((1 - g.^2)*x(i, :));
     G1 = G1 + grad(1:end-1,:);
 end
-G1 = G1/n;
-G2 = G2/n;
-    
+
+%  norm = 1E-2*sign(W1);
+%  norm(:,end) = 0;
+G1 = G1/n;% - norm;
+G2 = G2/n;    
+end
+
+function err = PCVE(X,y,lambda)
+
+%Select a spread of p% of all rows for cross validation
+p = 1;
+n = size(X,1);
+s = ceil(1/p);
+cvSet = (s:s:n)';
+m = length(cvSet);
+row = (1:n)';
+errVect = zeros(m,1);
+L = lambda*eye(size(X,2));
+
+%Loop and fit model m times computing error each time
+for i = 1:m
+   indx = row ~= cvSet(i);
+   Xfit = X(indx,:);
+   yfit = y(indx);
+   C = pinv(Xfit'*Xfit + L)*(Xfit'*yfit);
+   yEst = X(~indx,:)*C;
+   errVect(i) = (yEst - y(~indx))^2;
+end
+err = sqrt(mean(errVect));
+
 end

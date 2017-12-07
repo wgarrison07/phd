@@ -1,33 +1,29 @@
 function model = TestDriver()
 close all;
 obj = ObjectiveFunctionStructure();
-f = obj{1};
+f = obj{11};
 min = f.MinVals;
 max = f.MaxVals;
-num = 250;
+num = 500;
 x = RandomLatinHypercube([min; max], num);
 y = zeros(num,1);
+% f.Func = @(x) x.^2;
 for i = 1:num
     y(i) = f.Func(x(i,:));
 end
 sig = var(y);
 SNR = 1E10;
 noise = sig/SNR;
-y = y + sqrt(noise)*randn(size(y));
+fprintf(1, 'Noise Var is: %f\n', noise);
+fprintf(1, 'Sig Var is: %f\n', sig);
+fprintf(1, 'Truth Nugget: %f\n', noise/(sig + noise));
+yn = y + sqrt(noise)*randn(size(y));
 
+model = RBF(x, yn, 'plot');
 
-% y2 = zeros(num,1);
-% for i = 1:num
-%     y2(i) = f.Func(x(i,:)) + 4*randn();
-% end
-% 
-% 
-% y3 = zeros(num,1);
-% for i = 1:num
-%     y3(i) = f.Func(x(i,:)) + 4*randn();
-% end
-% model = RBF([x;x;x], [y;y2;y3]);
+yEst = EvalModel(model, x);
+normErr = sqrt(mean((yEst - y).^2))/sqrt(sig);
+fprintf(1, 'MVE = %f\n', normErr);
 
-
-model = ANN(x, y);
+% EvalModel(model, x);
 end
