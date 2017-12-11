@@ -16,7 +16,7 @@ model.InputDim = size(x,2);
 model.OutputDim = size(y,2);
 
 numSamples = size(x,1);
-semivariance = false;
+crossvalidate = false;
 validationSet = false;
 xMVE = ones(1, model.InputDim);
 yMVE = ones(1, model.InputDim);
@@ -45,7 +45,7 @@ while i <= length(varargin)
            error('Validation size inconsistent');
        end
    elseif strcmp(varargin{i}, 'semivariance')
-       semivariance = true;
+       crossvalidate = true;
        i = i + 1;
    elseif strcmp(varargin{i}, 'startOrder')
        startOrder = varargin{i+1};
@@ -87,28 +87,31 @@ for i = 1:numSamples
 end
         
 %Determine Regularization Coefficient
-if semivariance
-    %Estimate Lambda from SemiVariance
-    bins = ceil(0.5*numSamples);
-    binWidth = max(dist)/bins;
-    indx = dist < binWidth;
-    if ~any(indx)
-        model.lambda = 1E-3;
-    else
-        model.lambda = mean(vari(indx));
-    end
-    model.MVE = PCVE(X, y, model.lambda);
+if crossvalidate
+    %Optimize Regularization Coefficient via Cross Validation
+    [model.lambda, model.MVE] = BoundLineSearch(@(L) PCVE(X, y, L), 0, 1, true); 
 elseif validationSet
     %Optimize Regularization Coefficient
     [model.lambda, model.MVE] = BoundLineSearch(@(L) VE(X, y, XMVE, yMVE, L), 0, 1);
 else       
-    %Optimize Regularization Coefficient via Cross Validation
-    [model.lambda, model.MVE] = BoundLineSearch(@(L) PCVE(X, y, L), 0, 1); 
+    %Estimate Lambda from SemiVariance
+    bins = ceil(sqrt(numSamples));
+    binWidth = max(dist)/bins;
+    indx = dist < binWidth;
+    while sum(indx) < 3
+        binWidth = binWidth*2;
+        indx = dist < binWidth;
+    end
+    R = [ones(sum(indx),1), dist(indx)];
+    temp = chol(R'*R)\eye(2);
+    fit = (temp*temp')*(R'*vari(indx));
+    model.lambda = max(fit(1), 0);
+    model.MVE = PCVE(X, y, model.lambda);
 end
 
 %Compute Model Parameters and Fit Statistics
-L = model.lambda*eye(size(X,2));
-temp = inv(chol(X'*X + L));
+I = eye(size(X,2));
+temp = chol(X'*X + model.lambda*I)\I;
 C = (temp*temp')*(X'*y);
 yEst = X*C;
 yBar = mean(y);
@@ -145,23 +148,22 @@ function err = PCVE(X,y,lambda)
 
 %Select a spread of p% of all rows for cross validation
 n = size(X,1);
-p = min(40/n, 1.0);
-if n > 100
-    p = 100/n;
-end
+p = min(500/n, 1.0);
 s = ceil(1/p);
 cvSet = (s:s:n)';
 m = length(cvSet);
 row = (1:n)';
 errVect = zeros(m,1);
-L = lambda*eye(size(X,2)-1);
+L = lambda*eye(size(X,2));
+cholX = chol(X'*X + L);
+I = eye(size(X, 2) - 1);
 
 %Loop and fit model m times computing error each time
 for i = 1:m
    indx = row ~= cvSet(i);
-   Xfit = X(indx,indx);
+   Xfit = cholX(indx,indx);
    yfit = y(indx);
-   temp = inv(chol(Xfit'*Xfit + L));
+   temp = Xfit\I;
    C = (temp*temp')*(Xfit'*yfit);
    yEst = X(~indx,indx)*C;
    errVect(i) = (yEst - y(~indx))^2;

@@ -55,14 +55,15 @@ switch model.Type
         
     case 'Kriging'
         X = zeros(model.numNodes, numSamples);
+        lag = zeros(numSamples, 1);
+        C = -3/(model.Range*model.Range);
         for i = 1:model.numNodes
             for j = 1:numSamples
-                lag = min(norm(model.nodeX(i,:) - x(j,:))/model.Range, 1);
-                s = VarianceModel(model.Nugget, model.Sill, lag, model.vModel);
-                X(i, j) = s;
+                lag(j) = norm(model.nodeX(i,:) - x(j,:));
             end
+            X(i, :) = (model.Sill-model.Nugget)*exp(C*lag.^2) + model.Nugget;
         end
-        yEst = model.nodeY'*model.PsiInv*X;
+        yEst = (model.nodeY'*model.PsiInv*X)';
         
     case 'ANN'
         yEst = PredictANN(model.W1, model.W2, x);

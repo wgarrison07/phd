@@ -1,8 +1,8 @@
 function ExecuteResearchQuestion1()
 
 % types = {'PolyReg', 'SplineReg', 'RBF', 'Kriging', 'ANN'};
-types = {'RBF'};
-SNRs  = [100, 10, 5, 1, 0.1];
+types = {'Kriging'};
+SNRs  = [1E8, 100, 10, 5, 1, 0.1];
 OBJs  = ObjectiveFunctionStructure()';
 
 %Create Directory for Data to Save

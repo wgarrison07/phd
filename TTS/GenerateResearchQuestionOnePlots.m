@@ -33,7 +33,7 @@ for i = 3:length(files)
     load(fullfile(folder, files(i).name), 'MVE', 'samp');
     loglog(samp, MVE);
     title(plotname);
-    axis([10, 500, 1E-3, 1E1]);
+    axis([10, 500, 1E-3, 3E1]);
 
 end
 end
