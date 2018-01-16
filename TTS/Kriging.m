@@ -14,7 +14,7 @@ model.InputDim = size(x,2);
 model.OutputDim = size(y,2);
 
 numSamples = size(x,1);
-testPlot = false;
+testPlot = true;
 
 %Normalize and Sort Inputs, Normalize Outputs
 [x, model.InputMu, model.InputSigma] = NormalizeData(x);

@@ -1,8 +1,8 @@
-function [MVE, samples] = ExecuteModelTrainingTest(ObjFunction, ModelType, SNR, count, totCount, timer)
+function [R2, samples] = ExecuteModelTrainingTest(ObjFunction, ModelType, SNR, count, totCount, timer)
 
 rng(2194851);
 supportedModels = {'PolyReg', 'SplineReg', 'RBF', 'Kriging', 'ANN'};
-samples = [10, 20, 30, 50, 100, 500];
+samples = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 200, 500, 1000];
 reps    = 100;
 
 %% Input Processing
@@ -37,7 +37,7 @@ if nargin >= 6
 end
 
 %% Model Training Loop
-MVE = zeros(1, length(samples));
+R2 = zeros(1, length(samples));
 maxRows = ceil(samples(end)*1.1);
 rows = 1:maxRows;
 for i = 1:reps
@@ -70,19 +70,23 @@ for i = 1:reps
         end
         
         %Check Model Accuracy against Unnoised Data
+        y = outputSet(~indx);
         yEst = EvalModel(model, inputSet(~indx,:));
-        normErr = sqrt(mean((yEst - outputSet(~indx,:)).^2))/signal;
-        MVE(j) = MVE(j) + normErr;
-        fprintf(1, 'Samples: %f, Err: %f\n', samples(j), normErr);
+        yBar = mean(y);
+        SStot = sum((y - yBar).^2);
+        err = yEst - y;
+        SSres = sum(err.*err);
+        r2 = 1 - SSres/SStot;
+        R2(j) = R2(j) + r2;
+        fprintf(1, 'Samples: %f, Err: %f\n', samples(j), r2);
         
     end
     
 end
 
 %Normalize Error by Num Replications
-MVE = MVE/reps;
+R2 = R2/reps;
 
-% plot(samples, MVE);
 
 end
 

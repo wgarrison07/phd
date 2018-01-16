@@ -1,4 +1,4 @@
-function value = ComputeSinuosity(func, varMin, varMax, samplePoints, replications)
+function value = ComputeSinuosity(func, varMin, varMax, samplePoints)
 %% Check Inputs
 if nargin < 3
     error('"func", "varMin", and "varMax" are required inputs');
@@ -12,47 +12,68 @@ end
 
 %% Initialize Variables
 if nargin < 4
-    samplePoints = 100;
+    samplePoints = 10000;
 end
-derivEp = 1E-4*(varMax - varMin);
 dim = length(varMin);
-sample = zeros(1,dim);
 sampleLoc = rand(samplePoints,dim);
-for i = 1:dim
-    range = varMax(i) - varMin(i);
-    sampleLoc(:,i) = sampleLoc(:,i)*range + varMin(i);
-    sample(i) = varMin(i);
-end
-
-
 
 %% Compute Second Derivative at Sample Locations
 d2fdx2 = zeros(samplePoints, dim);
 fVals = zeros(3,1);
-sumVals = 0;
+data = zeros(samplePoints, 1);
+stepVar = (varMax - varMin)/1E2;
 for i = 1:size(d2fdx2,1)
    for j = 1:dim
        sample = sampleLoc(i,:);
-       step = derivEp(j);
+       step = stepVar(j);
        fVals(1) = func(sample);
-       sumVals = sumVals + abs(fVals(1));
        sample(j) = sampleLoc(i,j) + step;
        fVals(2) = func(sample);
        sample(j) = sampleLoc(i,j) - step;
        fVals(3) = func(sample);
        d2fdx2(i,j) = (fVals(2) - 2*fVals(1) + fVals(3))/step^2;
+       data(i) = fVals(1);
    end    
 end
 
 
-%% Compute Sinuosity
-meanfVal = sumVals/samplePoints;
-mean2ndDeriv = mean(d2fdx2,1);
-std2ndDeriv = std(d2fdx2, 0, 1);
-value = norm(std2ndDeriv ./ mean2ndDeriv);
-% value = norm(var2ndDeriv./meanfVal);
+%% Filter Noisy Second Derivative
+normDat = NormalizeData(d2fdx2);
+indx = all(abs(normDat) < 6, 2);
+d2fdx2 = d2fdx2(indx,:);
+samplePoints = sum(indx);
 
-% plot3(sampleLoc(:,1), sampleLoc(:,2), d2fdx2(:,1), '.');
+%% Determine Optimal Bin Size for Data
+% Freedman-Diaconis Rule
+range = max(max(d2fdx2) - min(d2fdx2), 1E-2);
+innerRange = max(iqr(timeseries(d2fdx2)), 1E-2);
+bins = ceil(mean(range ./ (2*innerRange*samplePoints^(-1/3))));
+bins = min(bins, ceil(2*sqrt(samplePoints)));
+% bins = sqrt(samplePoints);
 
+%% Bin Samples
+binIndx = zeros(size(d2fdx2));
+for i = 1:dim
+    start = min(d2fdx2(:, i));
+    width = range(i)/bins;
+    for j = 1:bins
+        indx = d2fdx2(:, i) > (start + (j-1)*width) & d2fdx2(:, i) <= (start + j*width);
+        binIndx(indx, i) = j;
+    end
+end
+
+%% Compute Joint Entropy
+H = 0;
+comb = unique(binIndx, 'rows');
+for i = 1:size(comb, 1)
+    indx = true(samplePoints, 1);
+    for j = 1:dim
+        indx = indx & (binIndx(:, j) == comb(i, j));
+    end
+    count = sum(indx);
+    p = count/samplePoints;
+    H = H + p*log2(p)/log2(samplePoints);
+end
+value = -1*H;
 
 end

@@ -1,5 +1,4 @@
 
-
 function model = SplineReg(x, y, varargin)
 %% Input Processing
 if nargin < 2
@@ -26,8 +25,8 @@ yMVE = ones(1, model.InputDim);
 startOrder = 0;
 stopOrder = floor(((numSamples - 1) - ComputePowerMatrixSize(polyOrder, model.InputDim))/model.InputDim);
 testPlot = false;
-abortTol = 1E-2;
-maxStallCount = 10;
+abortTol = 1E-3;
+maxStallCount = 5;
 stallCount = 0;
 
 %Normalize and Sort Inputs, Normalize Outputs
@@ -104,15 +103,17 @@ for iOrder  = startOrder:stopOrder
         X(:,numPolyCoef+i) = max(x(:,dim) - K(knot, dim), 0).^polyOrder;
     end
     
-    if crossValidate
-        [MVE, lambda] = PCVE(X, y); 
-    else       
-        [MVE, lambda] = VE(X, y, XMVE, yMVE);         
+    try %Fit Model
+        if crossValidate
+            [MVE, C] = PCVE(X, y); 
+        else       
+            [MVE, C] = VE(X, y, XMVE, yMVE);         
+        end
+    catch
+        break;
     end
 
-    %Compute Model Parameters and Fit Statistics
-    temp = inv(chol(X'*X + lambda*eye(size(X,2))));
-    C = (temp*temp')*(X'*y);
+    %Compute Model Fit Statistics
     yEst = X*C;
     yBar = mean(y);
     SStot = sum((y - yBar).^2);
@@ -143,7 +144,7 @@ for iOrder  = startOrder:stopOrder
         end
     end
         
-    if model.MVE - MVE > 0.02*model.MVE
+    if model.MVE - MVE > 0.1*model.MVE
         model.Order = iOrder;
         model.K = K;
         model.C = C;
@@ -178,29 +179,30 @@ function [err, lambda] = PCVE(X,y)
 
 %Select a spread of p% of all rows for cross validation
 n = size(X,1);
-p = min(40/n, 1.0);
+p = min(50/n, 1.0);
 s = ceil(1/p);
 cvSet = (s:s:n)';
 m = length(cvSet);
 row = (1:n)';
 errVect = zeros(m,1);
 
-%Ensure Matrix is Semi-Positive Definite
-lambda = 1E-3;
+%Ensure Matrix is Positive Definite
 I = eye(size(X,2));
+L = 1E-3*I;
 XtX = X'*X;
-[~, p] = chol(XtX + lambda*I);
+[~, p] = chol(XtX + L);
 while p ~= 0
-    lambda = lambda*2;
-    [~, p] = chol(XtX + lambda*I);
+    L = 2*L;
+    [~, p] = chol(XtX + L);
 end
+lambda = L(1);
 
 %Loop and fit model m times computing error each time
 for i = 1:m
    indx = row ~= cvSet(i);
    Xfit = X(indx,:);
    yfit = y(indx);
-   temp = inv(chol(Xfit'*Xfit + lambda*I));
+   temp = chol(Xfit'*Xfit + L)\I;
    C = (temp*temp')*(Xfit'*yfit);
    yEst = X(~indx,:)*C;
    errVect(i) = (yEst - y(~indx))^2;

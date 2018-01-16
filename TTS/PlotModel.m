@@ -1,7 +1,7 @@
 function PlotModel(model)
 
-x = (-3:0.1:3).*model.InputSigma(1) + model.InputMu(1);
-y = (-3:0.1:3).*model.InputSigma(1) + model.InputMu(1);
+x = (-1:0.05:1).*model.InputSigma(1) + model.InputMu(1);
+y = (-1:0.01:1).*model.InputSigma(1) + model.InputMu(1);
 [X, Y] = meshgrid(x, y);
 out = EvalModel(model, [X(:), Y(:)]);
 Z = reshape(out, size(X));

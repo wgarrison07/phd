@@ -14,6 +14,10 @@ end
 x = NormalizeData(x, model.InputMu, model.InputSigma);
 numSamples = size(x,1);
 
+if any(abs(x(:)) > 1.02)
+    warning('Extrapolating Surrogate Model.  Results May Be Inaccurate.');
+end
+
 %% Model Type Switch
 switch model.Type
     case 'PolyReg'
@@ -46,21 +50,19 @@ switch model.Type
     case 'RBF'
         X = zeros(numSamples, model.numNodes);
         for i = 1:model.numNodes
-            for j = 1:numSamples
-                r = max(norm(model.nodeX(i,:) - x(j,:)), 1E-5);
-                X(j, i) = r^2*log(r);
-            end
+            nodeVal = repmat(model.nodeX(i,:), numSamples, 1);
+            r = sqrt(sum((nodeVal - x).^2, 2));
+            r(r < 1E-5) = 1E-5;
+            X(:, i) = r.*r.*log(r);
         end
         yEst = X*model.C;
         
     case 'Kriging'
         X = zeros(model.numNodes, numSamples);
-        lag = zeros(numSamples, 1);
         C = -3/(model.Range*model.Range);
         for i = 1:model.numNodes
-            for j = 1:numSamples
-                lag(j) = norm(model.nodeX(i,:) - x(j,:));
-            end
+            nodeVal = repmat(model.nodeX(i,:), numSamples, 1);
+            lag = sqrt(sum((nodeVal - x).^2, 2));
             X(i, :) = (model.Sill-model.Nugget)*exp(C*lag.^2) + model.Nugget;
         end
         yEst = (model.nodeY'*model.PsiInv*X)';

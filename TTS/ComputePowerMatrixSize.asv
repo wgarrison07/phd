@@ -1,0 +1,15 @@
+function size = ComputePowerMatrixSize(Order, InputDim)
+
+%Build Pascal's Triangle
+size = Order + InputDim;
+coefs = zeros(size);
+coefs(:, 1) = 1;
+indx1 = 1:size-1;
+indx2 = 2:size;
+for i = 2:size
+    coefs(i, indx2) = coefs(i-1, indx1) + coefs(i-1, indx2);
+end
+
+size = sum(diag(coefs, -1*(
+
+end

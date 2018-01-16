@@ -127,24 +127,24 @@ function objFuns = ObjectiveFunctionStructure()
     rosen20d.MaxVals = repmat(2.048, 1, 50);
     
     objFuns = {
-        forr,
-        sphere, 
-        booth, 
-        rosenbrock,
-        beale,
-        gp,
-        zak,
-        thc,
-        mich,
-        buk,
-        ack,
-        levy, 
-        egg,
-        shekel,
-        hart6d,
-        powell10d,
-        ackley10d,
-        rosen20d
+        forr,         %1
+        sphere,       %2
+        booth,        %3
+        rosenbrock,   %4
+        beale,        %5
+        gp,           %6
+        zak,          %7
+        thc,          %8
+        mich,         %9
+        buk,          %10
+        ack,          %11
+        levy,         %12
+        egg,          %13
+        shekel,       %14
+        hart6d,       %15
+        powell10d,    %16
+        ackley10d,    %17
+        rosen20d      %18
         };
     
     

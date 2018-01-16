@@ -13,6 +13,9 @@ model = SurrogateModel();
 model.Type = 'PolyReg';
 model.InputDim = size(x,2);
 model.OutputDim = size(y,2);
+model.MVE   = 1E16;
+model.C     = 0;
+model.P     = zeros(1, model.InputDim);
 
 numSamples = size(x,1);
 crossValidate = true;
@@ -25,7 +28,7 @@ while ComputePowerMatrixSize(stopOrder + 1, model.InputDim) < numSamples
 end
 testPlot = false;
 abortTol = 1E-3;
-maxStallCount = 2;
+maxStallCount = 3;
 stallCount = 0;
 
 %Normalize and Sort Inputs, Normalize Outputs
@@ -73,7 +76,6 @@ while i <= length(varargin)
 end
 
 %% Model Construction Loop
-model.MVE   = 1E16;
 for iOrder  = startOrder:stopOrder
     %Generate Vandermoode Matrix
     P = ComputePowerMatrix(iOrder, model.InputDim);
@@ -86,19 +88,20 @@ for iOrder  = startOrder:stopOrder
             XMVE(:,i) = XMVE(:,i).*(xMVE(:,j).^P(i,j));
         end
     end
-        
-    %Determine Regularization Coefficient
-    if crossValidate
-        %Optimize Regularization Coefficient via Cross Validation
-        [lambda, MVE] = BoundLineSearch(@(L) PCVE(X, y, L), 1E-3, 0.1*numSamples); 
-    else       
-        %Optimize Regularization Coefficient
-        [lambda, MVE] = BoundLineSearch(@(L) VE(X, y, XMVE, yMVE, L), 1E-3, 0.1*numSamples);         
+
+    try %Fit Model
+        if crossValidate
+            %Optimize Regularization Coefficient via Cross Validation
+            [MVE, C] = PCVE(X, y); 
+        else       
+            %Optimize Regularization Coefficient
+            [MVE, C] = VE(X, y, XMVE, yMVE);         
+        end
+    catch %If Cholesky fails, break loop
+        break;
     end
 
     %Compute Model Parameters and Fit Statistics
-    temp = inv(chol(X'*X + lambda*eye(size(X,2))));
-    C = (temp*temp')*(X'*y);
     yEst = X*C;
     yBar = mean(y);
     SStot = sum((y - yBar).^2);
@@ -118,22 +121,20 @@ for iOrder  = startOrder:stopOrder
             tempModel = model;
             tempModel.C = C;
             tempModel.P = P;
-            tempModel.lambda = lambda;            
             
             figure();
             PlotModel(tempModel);
             hold on;
             plot3(x(:,1), x(:,2), y, '.k');
-            zlim([-3, 3]);
+            zlim([-1, 1]);
         end
     end
         
     %Update Model Parameters if Error Decreased
-    if model.MVE - MVE > 0.05*model.MVE
+    if MVE < model.MVE
         model.Order = iOrder;
         model.C = C;
         model.P = P;
-        model.lambda = lambda;
         model.MRSE = MRSE;
         model.R2 = R2;
         model.MVE = MVE;
@@ -143,7 +144,7 @@ for iOrder  = startOrder:stopOrder
     end
         
     if testPlot
-        fprintf(1, 'Order %i, MVE = %f, lambda = %f\n', iOrder, MVE, lambda);
+        fprintf(1, 'Order %i, MVE = %f\n', iOrder, MVE);
     end
     
     %Break generation loop if if model meets abort criteria
@@ -156,7 +157,7 @@ end
 
 %Function to compute Partial Cross Validation Error for Polynomial
 %Regression.
-function err = PCVE(X,y,lambda)
+function [err, Cavg] = PCVE(X,y)
 
 %Select a spread of p% of all rows for cross validation
 n = size(X,1);
@@ -166,27 +167,29 @@ cvSet = (s:s:n)';
 m = length(cvSet);
 row = (1:n)';
 errVect = zeros(m,1);
-L = (lambda)*eye(size(X,2));
+I = eye(size(X,2));
+Cavg = zeros(size(X,2),1);
 
 %Loop and fit model m times computing error each time
 for i = 1:m
    indx = row ~= cvSet(i);
    Xfit = X(indx,:);
    yfit = y(indx);
-   temp = inv(chol(Xfit'*Xfit + L));
-   C = (temp*temp')*(Xfit'*yfit); 
+   temp = chol(Xfit'*Xfit)\I;
+   C = (temp*temp')*(Xfit'*yfit);
+   Cavg = Cavg + C;
    yEst = X(~indx,:)*C;
    errVect(i) = (yEst - y(~indx))^2;
 end
 err = sqrt(mean(errVect));
-
+Cavg = Cavg/m;
 end
 
 %Compute Validation Error of a Model
-function err = VE(X, y, Xval, yval, lambda)
+function [err, C] = VE(X, y, Xval, yval)
 
-L = lambda*eye(size(X,2));
-C = (X'*X + L)\(X*y);
+temp = chol(X'*X)\eye(size(X,2));
+C = (temp*temp')*(X*y);
 yEst = Xval*C;
 err = norm(yEst - yval);
 

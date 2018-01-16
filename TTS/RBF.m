@@ -142,21 +142,27 @@ end
         
 end
 
-%Function to compute Partial Cross Validation Error for Polynomial
-%Regression.
+%Function to compute Partial Cross Validation Error for RBF Regression
 function err = PCVE(X,y,lambda)
 
 %Select a spread of p% of all rows for cross validation
 n = size(X,1);
-p = min(500/n, 1.0);
+p = min(50/n, 1.0);
 s = ceil(1/p);
 cvSet = (s:s:n)';
 m = length(cvSet);
 row = (1:n)';
 errVect = zeros(m,1);
-L = lambda*eye(size(X,2));
-cholX = chol(X'*X + L);
 I = eye(size(X, 2) - 1);
+
+%Update Lambda to ensure positive definiteness
+L = max(lambda, 1E-3)*eye(size(X,2));
+XtX = X'*X;
+[cholX, p] = chol(XtX + L);
+while p ~= 0
+    L = 2*L;
+    [cholX, p] = chol(XtX + L);
+end  
 
 %Loop and fit model m times computing error each time
 for i = 1:m
@@ -169,18 +175,25 @@ for i = 1:m
    errVect(i) = (yEst - y(~indx))^2;
 end
 err = sqrt(mean(errVect));
-
 end
 
 %Compute Validation Error of a Model
 function err = VE(X, y, Xval, yval, lambda)
 
-L = lambda*eye(size(X,2));
-C = (X'*X + L)\(X*y);
+%Update Lambda to ensure positive definiteness
+I = eye(size(X,2));
+L = max(lambda, 1E-3)*I;
+XtX = X'*X;
+[cholX, p] = chol(XtX + L);
+while p ~= 0
+    L = 2*L;
+    [cholX, p] = chol(XtX + L);
+end  
+
+temp = cholX\I;
+C = (temp*temp')*(X*y);
 yEst = Xval*C;
 err = norm(yEst - yval);
 
 end
-
-
 

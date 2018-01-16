@@ -4,6 +4,7 @@ function powerMatrix = ComputePowerMatrix(Order, InputDim)
     %raised.
     size = ComputePowerMatrixSize(Order, InputDim);
     powerMatrix = zeros(size, InputDim);
+    powerMatrix(1, 1) = 1;
     for i = 2:size
         powerMatrix(i,:) = powerMatrix(i-1,:);
         for j = 1:InputDim

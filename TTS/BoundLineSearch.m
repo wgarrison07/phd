@@ -40,21 +40,38 @@ while normErr > fitTol && (X(4) - X(1)) > sepTol
     
     %Update Bounds using Golden Search
     if F(2) < F(3)
+        %Update Upper Bound
         X(4) = X(3);
         F(4) = F(3);
+        
+        %Update Inner Upper Value
+        X(3) = X(2);
+        F(3) = F(2);
+        
+        %Compute New Inner Lower Value
+        X(2) = X(4) - (X(4)-X(1))/phi;
+        F(2) = func(X(2));
+        
+        %Update Function Average
+        avg = (count*avg + abs(F(2)))/(count+1);
+        count = count + 1;
     else
+        %Update Lower Bound
         X(1) = X(2);
         F(1) = F(2);
+        
+        %Update Inner Lower Bound
+        X(2) = X(3);
+        F(2) = F(3);
+        
+        %Compute New Upper Inner Bound
+        X(3) = X(1) + (X(4)-X(1))/phi;
+        F(3) = func(X(3));
+        
+        %Update Function Average
+        avg = (count*avg + abs(F(2)))/(count+1);
+        count = count + 1;
     end    
-    range = X(4) - X(1);
-    X(2) = X(4) - range/phi;
-    F(2) = func(X(2));
-    X(3) = X(1) + range/phi;
-    F(3) = func(X(3));
-    
-    %Update Function Average
-    avg = (count*avg + abs(F(2)) + abs(F(3)))/(count+2);
-    count = count + 2;
     
     %Recompute Quadratic Approx and Compute Error
     [A, err] = FitPoly(F, X);

@@ -1,8 +1,8 @@
 
 
 objFuns = ObjectiveFunctionStructure();
-
-numTrials = 100;
+sinuosityData = struct();
+numTrials = 1;
 close all;
 
 for i = 1:length(objFuns)
@@ -11,11 +11,11 @@ for i = 1:length(objFuns)
    for j = 1:numTrials
         sinuosity(j) = ComputeSinuosity(fun.Func, fun.MinVals, fun.MaxVals); 
    end
-%    figure();
-%    plot(log(sinuosity));
-   fprintf(1,'sinuosity of %s = %f\n', fun.Name, median(sinuosity));
+   fprintf(1,'Estimated sinuosity of %s = %f\n', fun.Name, mean(sinuosity));
+   sinuosityData.(fun.Name) = mean(sinuosity);
 end
 
+save('SinuosityData', 'sinuosityData');
 
 % fun = objFuns{1};
 % x = 0:0.0001:1;
